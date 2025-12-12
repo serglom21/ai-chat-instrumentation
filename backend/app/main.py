@@ -2,46 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routes import router
-import sentry_sdk
-from sentry_sdk.integrations.fastapi import FastApiIntegration
-from sentry_sdk.integrations.starlette import StarletteIntegration
+from app.otel_config import setup_otel, instrument_app
 
-# Initialize Sentry (only if DSN is configured)
-if settings.SENTRY_DSN:
-    sentry_sdk.init(
-        dsn=settings.SENTRY_DSN,
-    
-    # Performance monitoring - capture 100% of transactions
-    traces_sample_rate=1.0,
-    
-    # Profiling
-    profiles_sample_rate=1.0,
-    
-    # Environment
-    environment=settings.AI_PROVIDER if hasattr(settings, 'AI_PROVIDER') else "production",
-    
-    # Enable automatic instrumentation
-    integrations=[
-        FastApiIntegration(
-            transaction_style="endpoint",  # Group by endpoint
-            failed_request_status_codes=[500, 599],  # Track 5xx errors
-        ),
-        StarletteIntegration(
-            transaction_style="endpoint",
-        ),
-    ],
-    
-    # Enable tracing for all requests
-    enable_tracing=True,
-    
-    # Add release information
-    release=f"ai-assistant-backend@1.0.0",
-    
-    # Debug mode (disable in production)
-        debug=True,
-    )
-else:
-    print("⚠️  Sentry DSN not configured - Sentry monitoring disabled")
+# Initialize OpenTelemetry (sends traces to Sentry via OTLP)
+setup_otel()
 
 # Create FastAPI app
 app = FastAPI(
@@ -49,6 +13,9 @@ app = FastAPI(
     description="Backend API for AI Chat Assistant with Action Plan Management",
     version="1.0.0",
 )
+
+# Instrument app with OpenTelemetry
+instrument_app(app)
 
 # Configure CORS
 app.add_middleware(

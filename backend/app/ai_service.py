@@ -3,10 +3,13 @@ from typing import List, Dict, Optional
 from openai import OpenAI
 import google.generativeai as genai
 from groq import Groq
-import sentry_sdk
 from app.config import settings
 from app.langfuse_client import get_langfuse
 from app.models import ConversationMessage, ActionPlanModel
+from opentelemetry import trace
+
+# Get OpenTelemetry tracer
+tracer = trace.get_tracer(__name__)
 
 class AIService:
     def __init__(self):
@@ -66,17 +69,16 @@ class AIService:
             )
         
         try:
-            # Create Sentry span for AI generation
-            with sentry_sdk.start_span(
-                op="ai.chat.completions",
-                description=f"AI Generation ({self.provider})",
+            # Create OpenTelemetry span for AI generation
+            with tracer.start_as_current_span(
+                "ai.chat.completions",
+                attributes={
+                    "ai.provider": self.provider,
+                    "ai.model": self.model,
+                    "flow.type": flow_type,
+                    "message.length": len(message),
+                }
             ) as span:
-                # Add context to Sentry
-                span.set_tag("ai.provider", self.provider)
-                span.set_tag("ai.model", self.model)
-                span.set_tag("flow_type", flow_type)
-                span.set_data("message_length", len(message))
-                
                 # Call AI API based on provider
                 if self.provider == "gemini":
                     # Convert messages to Gemini format
@@ -119,11 +121,11 @@ class AIService:
                             }
                         )
                     
-                    # Add token usage to Sentry
+                    # Add token usage to OpenTelemetry span
                     if response.usage:
-                        span.set_data("tokens.prompt", response.usage.prompt_tokens)
-                        span.set_data("tokens.completion", response.usage.completion_tokens)
-                        span.set_data("tokens.total", response.usage.total_tokens)
+                        span.set_attribute("ai.tokens.prompt", response.usage.prompt_tokens)
+                        span.set_attribute("ai.tokens.completion", response.usage.completion_tokens)
+                        span.set_attribute("ai.tokens.total", response.usage.total_tokens)
             
             # Generate suggestions for certain flows
             suggestions = None

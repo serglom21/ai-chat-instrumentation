@@ -22,6 +22,7 @@ import ChatInput from '../components/ChatInput';
 import LoadingIndicator from '../components/LoadingIndicator';
 import { chatAPI } from '../services/api';
 import * as Sentry from '@sentry/react-native';
+import { useActionPlanFlowTracking } from '../hooks/useActionPlanFlowTracking';
 
 interface ChatScreenProps {
   navigation: any;
@@ -47,6 +48,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
   const [showSuggestions, setShowSuggestions] = useState(true);
   const [savedActionPlans, setSavedActionPlans] = useState<ActionPlan[]>([]);
   const scrollViewRef = useRef<ScrollView>(null);
+  const iterationCountRef = useRef(1);
+  
+  // Initialize flow tracking hook
+  const flowTracking = useActionPlanFlowTracking();
 
   useEffect(() => {
     scrollToBottom();
@@ -58,6 +63,19 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       handleTemplateSelect(route.params.template);
     }
   }, [route.params?.template]);
+  
+  useEffect(() => {
+    // 📊 Track flow abandonment when user navigates away
+    const unsubscribe = navigation.addListener('blur', () => {
+      // If user is in the middle of an action plan flow, mark as abandoned
+      if (chatState.activeFlow === 'action_plan_creation' && flowTracking.isFlowActive()) {
+        console.log('⚠️ User navigated away during active flow');
+        flowTracking.abandonFlow('user_navigated_away');
+      }
+    });
+    
+    return unsubscribe;
+  }, [navigation, chatState.activeFlow, flowTracking]);
 
   const scrollToBottom = () => {
     setTimeout(() => {
@@ -86,6 +104,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
 
   // FLOW 1: ACTION PLAN CREATION FLOW
   const handleTemplateSelect = async (template: typeof TEMPLATES[0]) => {
+    // 📊 START FLOW TRACKING
+    flowTracking.startFlow(template.id, template.title);
+    iterationCountRef.current = 1;
+    
     // User taps template card
     setShowTemplates(false);
     
@@ -93,6 +115,12 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
     addMessage('user', template.content, {
       isTemplate: true,
       flowType: 'action_plan_creation',
+    });
+    
+    // 📊 RECORD: Message sent
+    flowTracking.recordStep('MESSAGE_SENT', {
+      template_id: template.id,
+      message_length: template.content.length,
     });
 
     setChatState((prev) => ({
@@ -108,43 +136,121 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
         content: msg.content,
       }));
 
-      const response = await chatAPI.generateActionPlan(
-        template.content,
-        conversationHistory
+      // 📊 RECORD: API request started
+      const apiStartTime = Date.now();
+      flowTracking.recordStep('API_REQUEST_STARTED', {
+        endpoint: 'generate-action-plan',
+        iteration: 1,
+      });
+
+      // Execute API call within flow span context so it becomes a child
+      const response = await flowTracking.executeInFlowContext(async () => {
+        return await chatAPI.generateActionPlan(
+          template.content,
+          conversationHistory
+        );
+      });
+      
+      // Backend returns snake_case, need to handle both formats
+      const actionPlan = (response as any).action_plan || (response as any).actionPlan;
+      
+      console.log('📦 [ChatScreen] Response received:', {
+        hasResponse: !!response?.response,
+        hasActionPlan: !!actionPlan,
+        responseType: typeof response?.response,
+        actionPlanKeys: actionPlan ? Object.keys(actionPlan) : [],
+      });
+      
+      // 📊 RECORD: API call completed
+      const apiDuration = Date.now() - apiStartTime;
+      flowTracking.recordApiCall(
+        'generate-action-plan',
+        apiDuration,
+        true,
+        (response as any).metadata?.tokens
       );
+      
+      // 📊 RECORD: API response received
+      flowTracking.recordStep('API_RESPONSE_RECEIVED', {
+        response_size: response?.response?.length || 0,
+        has_action_plan: !!actionPlan,
+      });
 
       // Add AI response
-      addMessage('ai', response.response);
+      if (response?.response) {
+        addMessage('ai', response.response);
+      }
 
       // Create draft action plan
-      if (response.actionPlan) {
+      if (actionPlan) {
+        console.log('📋 [ChatScreen] Processing action plan...');
+        
+        // 📊 RECORD: Plan parsed
+        const planParseTime = 50; // Mock parsing time
+        flowTracking.recordActionPlanReceived(
+          actionPlan.content.split('\n').filter((l: string) => l.startsWith('#')).length,
+          actionPlan.content.split('\n').length,
+          planParseTime
+        );
+        
         const newActionPlan: ActionPlan = {
-          id: response.actionPlan.id,
-          title: response.actionPlan.title,
-          content: response.actionPlan.content,
+          id: actionPlan.id,
+          title: actionPlan.title,
+          content: actionPlan.content,
           status: 'draft',
           createdAt: new Date(),
           updatedAt: new Date(),
-          version: 1,
+          version: actionPlan.version || 1,
         };
 
+        console.log('✅ [ChatScreen] Setting action plan and stopping loading...');
         setChatState((prev) => ({
           ...prev,
           currentActionPlan: newActionPlan,
           isGenerating: false,
         }));
+        
+        // 📊 RECORD: Plan rendered
+        flowTracking.recordStep('PLAN_RENDERED', {
+          plan_id: newActionPlan.id,
+          plan_version: 1,
+        });
 
         // Show commit option
         addMessage('system', 'Would you like to commit to this action plan, or would you like me to refine it further?');
+        console.log('✅ [ChatScreen] Action plan processing complete');
+      } else {
+        console.warn('⚠️ [ChatScreen] No action plan in response, stopping loading...');
+        setChatState((prev) => ({
+          ...prev,
+          isGenerating: false,
+        }));
       }
     } catch (error) {
-      console.error('Error generating action plan:', error);
+      console.error('❌ [ChatScreen] Error generating action plan:', error);
+      console.error('❌ [ChatScreen] Error stack:', (error as Error).stack);
+      
+      // 📊 RECORD: Flow failed
+      flowTracking.failFlow(error as Error, 'api_request');
+      
       addMessage('ai', 'Sorry, I encountered an error generating your action plan. Please try again.');
+      
+      console.log('🛑 [ChatScreen] Stopping loading due to error...');
       setChatState((prev) => ({
         ...prev,
         isGenerating: false,
         activeFlow: undefined,
       }));
+    } finally {
+      // Safety net: ensure loading stops
+      console.log('🏁 [ChatScreen] Finally block - ensuring isGenerating is false');
+      setChatState((prev) => {
+        if (prev.isGenerating) {
+          console.warn('⚠️ [ChatScreen] isGenerating was still true in finally block!');
+          return { ...prev, isGenerating: false };
+        }
+        return prev;
+      });
     }
   };
 
@@ -156,6 +262,15 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       await commitActionPlan();
     } else {
       // Continue iteration
+      iterationCountRef.current += 1;
+      
+      // 📊 RECORD: User continued to next iteration
+      flowTracking.startIteration(iterationCountRef.current);
+      flowTracking.recordStep('USER_CONTINUED', {
+        iteration_number: iterationCountRef.current,
+        user_feedback_length: userMessage.length,
+      });
+      
       setChatState((prev) => ({ ...prev, isGenerating: true }));
 
       try {
@@ -164,16 +279,41 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
           content: msg.content,
         }));
 
-        const response = await chatAPI.sendMessage({
-          message: userMessage,
-          flowType: 'action_plan_creation',
-          actionPlanId: chatState.currentActionPlan?.id,
-          conversationHistory,
+        // 📊 RECORD: API request for iteration
+        const apiStartTime = Date.now();
+        flowTracking.recordStep('API_REQUEST_STARTED', {
+          endpoint: 'refine-action-plan',
+          iteration: iterationCountRef.current,
         });
+
+        const response = await flowTracking.executeInFlowContext(async () => {
+          return await chatAPI.sendMessage({
+            message: userMessage,
+            flowType: 'action_plan_creation',
+            actionPlanId: chatState.currentActionPlan?.id,
+            conversationHistory,
+          });
+        });
+        
+        // 📊 RECORD: API call for iteration completed
+        const apiDuration = Date.now() - apiStartTime;
+        flowTracking.recordApiCall(
+          'refine-action-plan',
+          apiDuration,
+          true,
+          (response as any).metadata?.tokens
+        );
 
         addMessage('ai', response.response);
 
         if (response.actionPlan) {
+          // 📊 RECORD: Updated plan parsed
+          flowTracking.recordActionPlanReceived(
+            response.actionPlan.content.split('\n').filter((l: string) => l.startsWith('#')).length,
+            response.actionPlan.content.split('\n').length,
+            50
+          );
+          
           setChatState((prev) => ({
             ...prev,
             currentActionPlan: {
@@ -183,6 +323,12 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
             },
             isGenerating: false,
           }));
+          
+          // 📊 RECORD: Updated plan rendered
+          flowTracking.recordStep('PLAN_RENDERED', {
+            plan_version: response.actionPlan.version,
+            iteration: iterationCountRef.current,
+          });
 
           addMessage('system', 'Here\'s the updated plan. Let me know if you\'d like more changes or if you\'re ready to commit.');
         } else {
@@ -190,6 +336,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
         }
       } catch (error) {
         console.error('Error in iteration:', error);
+        
+        // 📊 RECORD: Iteration failed
+        flowTracking.failFlow(error as Error, 'iteration_api_request');
+        
         addMessage('ai', 'Sorry, I encountered an error. Please try again.');
         setChatState((prev) => ({ ...prev, isGenerating: false }));
       }
@@ -200,7 +350,16 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
     if (!chatState.currentActionPlan) return;
 
     try {
-      const response = await chatAPI.commitActionPlan(chatState.currentActionPlan.id);
+      // 📊 RECORD: Plan committed
+      flowTracking.recordStep('PLAN_COMMITTED', {
+        plan_id: chatState.currentActionPlan.id,
+        plan_version: chatState.currentActionPlan.version,
+        total_iterations: iterationCountRef.current,
+      });
+
+      const response = await flowTracking.executeInFlowContext(async () => {
+        return await chatAPI.commitActionPlan(chatState.currentActionPlan.id);
+      });
 
       const savedPlan: ActionPlan = {
         ...chatState.currentActionPlan,
@@ -211,6 +370,9 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       setSavedActionPlans((prev) => [...prev, savedPlan]);
       
       addMessage('system', 'Your action plan has been saved successfully!');
+      
+      // 📊 COMPLETE FLOW - Success!
+      flowTracking.completeFlow(savedPlan.id);
 
       // Flow finished - reset state
       setChatState((prev) => ({
@@ -220,8 +382,13 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       }));
 
       setShowSuggestions(true);
+      iterationCountRef.current = 1;
     } catch (error) {
       console.error('Error committing action plan:', error);
+      
+      // 📊 RECORD: Commit failed
+      flowTracking.failFlow(error as Error, 'plan_commit');
+      
       addMessage('ai', 'Sorry, I encountered an error saving your action plan.');
     }
   };

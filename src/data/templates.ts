@@ -46,3 +46,4 @@ export const SUGGESTIONS: Array<{ id: string; text: string; category: string }> 
   { id: 'sug-5', text: 'What are effective study methods?', category: 'learning' },
 ];
 
+

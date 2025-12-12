@@ -1,5 +1,6 @@
 import axios from 'axios';
 import * as Sentry from '@sentry/react-native';
+import { getActiveSpan, spanToTraceHeader, spanToBaggageHeader } from '@sentry/core';
 
 // Update this to your backend URL
 // For local development with Expo:
@@ -14,6 +15,55 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
   timeout: 30000, // 30 second timeout
+});
+
+// Add request interceptor to inject Sentry trace headers for distributed tracing
+api.interceptors.request.use((config) => {
+  console.log('🔍 [API Interceptor] ==================');
+  console.log('🔍 [API Interceptor] Request to:', config.url);
+  console.log('🔍 [API Interceptor] Method:', config.method);
+  
+  const activeSpan = getActiveSpan();
+  console.log('🔍 [API Interceptor] Active span exists:', !!activeSpan);
+  
+  if (activeSpan) {
+    console.log('🔍 [API Interceptor] Active span type:', activeSpan.constructor.name);
+    console.log('🔍 [API Interceptor] Span attributes:', JSON.stringify(activeSpan.attributes || {}, null, 2));
+    
+    const traceHeader = spanToTraceHeader(activeSpan);
+    const baggageHeader = spanToBaggageHeader(activeSpan);
+    
+    console.log('🔍 [API Interceptor] Generated trace header:', traceHeader || 'NULL');
+    console.log('🔍 [API Interceptor] Generated baggage header:', baggageHeader || 'NULL');
+    
+    if (traceHeader) {
+      config.headers['sentry-trace'] = traceHeader;
+      console.log('✅ [API Interceptor] SET sentry-trace header:', traceHeader);
+    } else {
+      console.warn('⚠️ [API Interceptor] NO TRACE HEADER GENERATED!');
+    }
+    
+    if (baggageHeader) {
+      config.headers['baggage'] = baggageHeader;
+      console.log('✅ [API Interceptor] SET baggage header');
+    }
+    
+    // Also send flow ID if available (from span attributes)
+    const spanData = (activeSpan as any)._spanRecorder?.spans?.[0]?.attributes;
+    if (spanData && spanData['flow.id']) {
+      config.headers['x-flow-id'] = spanData['flow.id'];
+      console.log('✅ [API Interceptor] SET x-flow-id:', spanData['flow.id']);
+    } else {
+      console.log('ℹ️ [API Interceptor] No flow.id found in span attributes');
+    }
+  } else {
+    console.warn('⚠️ [API Interceptor] ❌ NO ACTIVE SPAN! Headers will NOT be sent.');
+    console.warn('⚠️ [API Interceptor] This means the API call is not wrapped in a Sentry span.');
+  }
+  
+  console.log('🔍 [API Interceptor] Final headers:', Object.keys(config.headers));
+  console.log('🔍 [API Interceptor] ==================\n');
+  return config;
 });
 
 export interface SendMessageRequest {
@@ -37,15 +87,16 @@ export interface SendMessageResponse {
 
 export const chatAPI = {
   sendMessage: async (data: SendMessageRequest): Promise<SendMessageResponse> => {
-    // Create a span for this API call
+    // Create a parent span for context, but let axios auto-instrument the HTTP request
     return await Sentry.startSpan(
       {
-        name: 'API: Send Message',
-        op: 'http.client',
+        name: 'API Call: Send Message',
+        op: 'function',
         attributes: {
-          'http.method': 'POST',
-          'http.url': '/chat/message',
-          flow_type: data.flowType,
+          'api.endpoint': '/chat/message',
+          'api.method': 'POST',
+          'api.base_url': API_BASE_URL,
+          'flow.type': data.flowType,
         },
       },
       async () => {
@@ -57,6 +108,8 @@ export const chatAPI = {
             action_plan_id: data.actionPlanId,
             conversation_history: data.conversationHistory || [],
           };
+          
+          // Axios will automatically create child HTTP span and propagate trace headers
           const response = await api.post('/chat/message', payload);
           return response.data;
         } catch (error) {
@@ -72,24 +125,51 @@ export const chatAPI = {
   },
 
   generateActionPlan: async (templateContent: string, conversationHistory: Array<{ role: string; content: string }>) => {
+    console.log('🚀 [API] ==================');
+    console.log('🚀 [API] generateActionPlan called');
+    
+    // Check if there's an active span BEFORE creating our own
+    const preExistingSpan = getActiveSpan();
+    console.log('🔍 [API] Pre-existing active span:', preExistingSpan ? 'YES' : 'NO');
+    if (preExistingSpan) {
+      console.log('🔍 [API] Pre-existing span type:', preExistingSpan.constructor.name);
+      console.log('🔍 [API] Pre-existing span attributes:', JSON.stringify(preExistingSpan.attributes, null, 2));
+    }
+    
+    // Create a parent span for context, but let axios auto-instrument the HTTP request
     return await Sentry.startSpan(
       {
-        name: 'API: Generate Action Plan',
-        op: 'http.client',
+        name: 'API Call: Generate Action Plan',
+        op: 'function',
         attributes: {
-          'http.method': 'POST',
-          'http.url': '/action-plan/generate',
+          'api.endpoint': '/action-plan/generate',
+          'api.method': 'POST',
+          'api.base_url': API_BASE_URL,
         },
       },
       async () => {
+        console.log('✅ [API] Inside Sentry.startSpan callback');
+        
+        // Check active span inside the callback
+        const activeSpanInside = getActiveSpan();
+        console.log('🔍 [API] Active span inside callback:', activeSpanInside ? 'YES' : 'NO');
+        if (activeSpanInside) {
+          console.log('🔍 [API] Active span type:', activeSpanInside.constructor.name);
+          console.log('🔍 [API] Active span attributes:', JSON.stringify(activeSpanInside.attributes, null, 2));
+        }
+        
         try {
+          console.log('🚀 [API] About to make axios.post request...');
+          // Axios will automatically create child HTTP span and propagate trace headers
           const response = await api.post('/action-plan/generate', {
             template_content: templateContent,  // snake_case
             conversation_history: conversationHistory,  // snake_case
           });
+          console.log('✅ [API] Request completed successfully');
+          console.log('🚀 [API] ==================\n');
           return response.data;
         } catch (error) {
-          console.error('API Error:', error);
+          console.error('❌ [API] Error:', error);
           Sentry.captureException(error, {
             tags: { api_endpoint: 'action-plan/generate' },
           });
@@ -117,19 +197,35 @@ export const chatAPI = {
   },
 
   commitActionPlan: async (actionPlanId: string) => {
-    try {
-      const response = await api.post('/action-plan/commit', {
-        action_plan_id: actionPlanId,  // snake_case
-      });
-      return response.data;
-    } catch (error) {
-      console.error('API Error:', error);
-      Sentry.captureException(error, {
-        tags: { api_endpoint: 'action-plan/commit' },
-        extra: { actionPlanId },
-      });
-      throw error;
-    }
+    // Create a parent span for context, but let axios auto-instrument the HTTP request
+    return await Sentry.startSpan(
+      {
+        name: 'API Call: Commit Action Plan',
+        op: 'function',
+        attributes: {
+          'api.endpoint': '/action-plan/commit',
+          'api.method': 'POST',
+          'api.base_url': API_BASE_URL,
+          'action_plan.id': actionPlanId,
+        },
+      },
+      async () => {
+        try {
+          // Axios will automatically create child HTTP span and propagate trace headers
+          const response = await api.post('/action-plan/commit', {
+            action_plan_id: actionPlanId,  // snake_case
+          });
+          return response.data;
+        } catch (error) {
+          console.error('API Error:', error);
+          Sentry.captureException(error, {
+            tags: { api_endpoint: 'action-plan/commit' },
+            extra: { actionPlanId },
+          });
+          throw error;
+        }
+      }
+    );
   },
 };
 

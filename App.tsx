@@ -17,13 +17,12 @@ const navigationIntegration = Sentry.reactNavigationIntegration({
 });
 
 // Initialize Sentry with automatic UI tracking
-// NOTE: In production, use environment variables or a secure config
-// For Expo, you can use app.config.js or EAS secrets
 Sentry.init({
-  dsn: process.env.EXPO_PUBLIC_SENTRY_DSN || 'YOUR_SENTRY_DSN_HERE',
+  dsn: 'https://0bdc0587668a5c8e493c065614c8b741@o4508236363464704.ingest.us.sentry.io/4509993588424704',
   
   // Performance monitoring
   tracesSampleRate: 1.0,
+  propagateTraceparent: true,
   
   // Profiling
   _experiments: {
@@ -37,19 +36,17 @@ Sentry.init({
   // Native support
   enableNative: true,
   
-  // Debug
-  debug: true,
+  // Debug (reduced to suppress benign warnings)
+  debug: false, // Set to true for detailed debugging
   environment: __DEV__ ? 'development' : 'production',
+  
+  // Enable HTTP client tracking for distributed tracing
+  enableCaptureFailedRequests: true,
   
   // Add navigation integration for AUTOMATIC ui.load spans
   integrations: [
     navigationIntegration,
-    Sentry.reactNativeTracingIntegration({
-      enableUserInteractionTracing: true,
-      enableNativeFramesTracking: true,
-      enableStallTracking: true,
-      enableAppStartTracking: true,
-    }),
+    Sentry.reactNativeTracingIntegration(),
   ],
 });
 

@@ -48,3 +48,4 @@ class CommitActionPlanResponse(BaseModel):
     message: str
     action_plan: ActionPlanModel
 
+

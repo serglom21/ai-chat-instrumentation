@@ -8,7 +8,11 @@ anthropic==0.18.0
 google-generativeai==0.3.2
 langchain==0.1.6
 langchain-openai==0.0.5
-
-
 groq>=0.37.0
-sentry-sdk[fastapi]>=2.47.0
+
+# OpenTelemetry packages for Sentry OTLP
+opentelemetry-api==1.21.0
+opentelemetry-sdk==1.21.0
+opentelemetry-instrumentation-fastapi==0.42b0
+opentelemetry-instrumentation-httpx==0.42b0
+opentelemetry-exporter-otlp-proto-http==1.21.0

@@ -20,3 +20,4 @@ fi
 echo "✅ Starting Expo development server..."
 npm start
 
+
