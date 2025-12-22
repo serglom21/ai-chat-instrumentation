@@ -65,6 +65,13 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
   }, [route.params?.template]);
   
   useEffect(() => {
+    // 📊 Track rerenders during active flow
+    if (chatState.activeFlow === 'action_plan_creation' && flowTracking.isFlowActive()) {
+      flowTracking.incrementRerenderCount();
+    }
+  }, [chatState, flowTracking]);
+  
+  useEffect(() => {
     // 📊 Track flow abandonment when user navigates away
     const unsubscribe = navigation.addListener('blur', () => {
       // If user is in the middle of an action plan flow, mark as abandoned
@@ -128,6 +135,9 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       isGenerating: true,
       activeFlow: 'action_plan_creation',
     }));
+    
+    // 📊 UX TIMING: First visual feedback (loading indicator appears)
+    flowTracking.captureFirstFeedback();
 
     try {
       // AI responds and generates action plan
@@ -179,11 +189,17 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       // Add AI response
       if (response?.response) {
         addMessage('ai', response.response);
+        
+        // 📊 UX TIMING: First content appears (AI text)
+        flowTracking.captureFirstContent();
       }
 
       // Create draft action plan
       if (actionPlan) {
         console.log('📋 [ChatScreen] Processing action plan...');
+        
+        // Measure render time
+        const renderStartTime = Date.now();
         
         // 📊 RECORD: Plan parsed
         const planParseTime = 50; // Mock parsing time
@@ -211,6 +227,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
         }));
         
         // 📊 RECORD: Plan rendered
+        const renderDuration = Date.now() - renderStartTime;
+        flowTracking.captureRenderTime('action_plan_card', renderDuration);
         flowTracking.recordStep('PLAN_RENDERED', {
           plan_id: newActionPlan.id,
           plan_version: 1,
@@ -219,6 +237,15 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
         // Show commit option
         addMessage('system', 'Would you like to commit to this action plan, or would you like me to refine it further?');
         console.log('✅ [ChatScreen] Action plan processing complete');
+        
+        // 📊 UX TIMING: User can now interact (plan is actionable)
+        flowTracking.captureActionable();
+        
+        // 📊 FLOW TIMING: Iteration complete
+        flowTracking.captureIterationEnd();
+        
+        // 📊 UX TIMING: Start tracking user idle time
+        flowTracking.startUserIdleTimer();
       } else {
         console.warn('⚠️ [ChatScreen] No action plan in response, stopping loading...');
         setChatState((prev) => ({
@@ -256,6 +283,9 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
 
   // Handle action plan iterations
   const handleActionPlanIteration = async (userMessage: string) => {
+    // 📊 UX TIMING: Capture user engagement (end of idle time)
+    flowTracking.captureUserEngagement();
+    
     if (userMessage.toLowerCase().includes('commit') || 
         userMessage.toLowerCase().includes('save') ||
         userMessage.toLowerCase().includes('looks good')) {
@@ -272,6 +302,9 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       });
       
       setChatState((prev) => ({ ...prev, isGenerating: true }));
+      
+      // 📊 UX TIMING: First feedback for iteration
+      flowTracking.captureFirstFeedback();
 
       try {
         const conversationHistory = chatState.messages.map((msg) => ({
@@ -305,8 +338,13 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
         );
 
         addMessage('ai', response.response);
+        
+        // 📊 UX TIMING: First content for iteration
+        flowTracking.captureFirstContent();
 
         if (response.actionPlan) {
+          const renderStartTime = Date.now();
+          
           // 📊 RECORD: Updated plan parsed
           flowTracking.recordActionPlanReceived(
             response.actionPlan.content.split('\n').filter((l: string) => l.startsWith('#')).length,
@@ -325,12 +363,19 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
           }));
           
           // 📊 RECORD: Updated plan rendered
+          const renderDuration = Date.now() - renderStartTime;
+          flowTracking.captureRenderTime('action_plan_update', renderDuration);
           flowTracking.recordStep('PLAN_RENDERED', {
             plan_version: response.actionPlan.version,
             iteration: iterationCountRef.current,
           });
 
           addMessage('system', 'Here\'s the updated plan. Let me know if you\'d like more changes or if you\'re ready to commit.');
+          
+          // 📊 UX TIMING: Iteration complete and actionable
+          flowTracking.captureActionable();
+          flowTracking.captureIterationEnd();
+          flowTracking.startUserIdleTimer();
         } else {
           setChatState((prev) => ({ ...prev, isGenerating: false }));
         }

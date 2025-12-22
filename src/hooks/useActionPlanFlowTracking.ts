@@ -35,6 +35,17 @@ interface FlowMetrics {
   totalDuration: number;
 }
 
+interface UXTimings {
+  templateTapTime: number;
+  firstFeedbackTime: number;
+  firstContentTime: number;
+  actionableTime: number;
+  iterationStartTimes: number[];
+  iterationEndTimes: number[];
+  userIdleStartTime: number | null;
+  rerenderCount: number;
+}
+
 export function useActionPlanFlowTracking() {
   const transactionRef = useRef<any>(null);
   const flowIdRef = useRef<string>(uuid.v4() as string);
@@ -48,6 +59,16 @@ export function useActionPlanFlowTracking() {
     totalTokensUsed: 0,
     totalDuration: 0,
   });
+  const uxTimingsRef = useRef<UXTimings>({
+    templateTapTime: 0,
+    firstFeedbackTime: 0,
+    firstContentTime: 0,
+    actionableTime: 0,
+    iterationStartTimes: [],
+    iterationEndTimes: [],
+    userIdleStartTime: null,
+    rerenderCount: 0,
+  });
 
   /**
    * Start the action plan creation flow
@@ -58,14 +79,29 @@ export function useActionPlanFlowTracking() {
     console.log('🎬 [Flow] Flow ID:', flowIdRef.current);
     console.log('🎬 [Flow] Template:', templateName, '(', templateId, ')');
     
-    startTimeRef.current = Date.now();
+    const now = Date.now();
+    startTimeRef.current = now;
     flowCompletedRef.current = false;
+    
+    // Reset metrics
     metricsRef.current = {
       iterationNumber: 1,
       totalIterations: 1,
       apiCallsCount: 0,
       totalTokensUsed: 0,
       totalDuration: 0,
+    };
+    
+    // Reset UX timings and capture template tap time
+    uxTimingsRef.current = {
+      templateTapTime: now,
+      firstFeedbackTime: 0,
+      firstContentTime: 0,
+      actionableTime: 0,
+      iterationStartTimes: [now],
+      iterationEndTimes: [],
+      userIdleStartTime: null,
+      rerenderCount: 0,
     };
 
     console.log('🔍 [Flow] Creating inactive flow span...');
@@ -300,8 +336,12 @@ export function useActionPlanFlowTracking() {
 
     console.log('✅ Flow completed successfully');
     
+    const now = Date.now();
     flowCompletedRef.current = true;
-    metricsRef.current.totalDuration = Date.now() - startTimeRef.current;
+    metricsRef.current.totalDuration = now - startTimeRef.current;
+    
+    // Capture final iteration end
+    captureIterationEnd();
 
     recordStep('CARD_DISPLAYED', {
       plan_id: finalPlanId,
@@ -317,13 +357,26 @@ export function useActionPlanFlowTracking() {
       transactionRef.current.setAttribute('flow.total_api_calls', metricsRef.current.apiCallsCount);
       transactionRef.current.setAttribute('flow.total_tokens', metricsRef.current.totalTokensUsed);
       
+      // Calculate time to commit (from template tap to commit)
+      const timeToCommit = now - uxTimingsRef.current.templateTapTime;
+      transactionRef.current.setAttribute('flow.time_to_commit', timeToCommit);
+      console.log(`⏱️ [Flow] Time to commit: ${timeToCommit}ms`);
+      
+      // Calculate user wait time (time actively waiting for AI responses)
+      const totalWaitTime = uxTimingsRef.current.iterationEndTimes.reduce((sum, endTime, idx) => {
+        const startTime = uxTimingsRef.current.iterationStartTimes[idx];
+        return sum + (endTime - startTime);
+      }, 0);
+      transactionRef.current.setAttribute('flow.user_wait_time', totalWaitTime);
+      console.log(`⏱️ [Flow] Total user wait time: ${totalWaitTime}ms`);
+      
       console.log('🏁 [Flow] Ending flow span...');
       transactionRef.current.end();
       console.log('✅ [Flow] Flow span ended');
     }
 
     transactionRef.current = null;
-  }, [recordStep]);
+  }, [recordStep, captureIterationEnd]);
 
   /**
    * Abandon the flow (user navigated away, closed app, etc.)
@@ -417,6 +470,121 @@ export function useActionPlanFlowTracking() {
     }
   }, []);
 
+  /**
+   * UX Timing Capture Methods
+   */
+  
+  const captureFirstFeedback = useCallback(() => {
+    if (uxTimingsRef.current.firstFeedbackTime === 0) {
+      const now = Date.now();
+      uxTimingsRef.current.firstFeedbackTime = now;
+      const timeToFirstFeedback = now - uxTimingsRef.current.templateTapTime;
+      
+      console.log(`⏱️ [UX] Time to first feedback: ${timeToFirstFeedback}ms`);
+      
+      if (transactionRef.current) {
+        transactionRef.current.setAttribute('ux.time_to_first_feedback', timeToFirstFeedback);
+      }
+    }
+  }, []);
+  
+  const captureFirstContent = useCallback(() => {
+    if (uxTimingsRef.current.firstContentTime === 0) {
+      const now = Date.now();
+      uxTimingsRef.current.firstContentTime = now;
+      const timeToFirstContent = now - uxTimingsRef.current.templateTapTime;
+      
+      console.log(`⏱️ [UX] Time to first content: ${timeToFirstContent}ms`);
+      
+      if (transactionRef.current) {
+        transactionRef.current.setAttribute('ux.time_to_first_content', timeToFirstContent);
+      }
+    }
+  }, []);
+  
+  const captureActionable = useCallback(() => {
+    if (uxTimingsRef.current.actionableTime === 0) {
+      const now = Date.now();
+      uxTimingsRef.current.actionableTime = now;
+      const timeToActionable = now - uxTimingsRef.current.templateTapTime;
+      const totalPerceivedLatency = now - uxTimingsRef.current.templateTapTime;
+      
+      console.log(`⏱️ [UX] Time to actionable: ${timeToActionable}ms`);
+      console.log(`⏱️ [UX] Total perceived latency: ${totalPerceivedLatency}ms`);
+      
+      if (transactionRef.current) {
+        transactionRef.current.setAttribute('ux.time_to_actionable', timeToActionable);
+        transactionRef.current.setAttribute('ux.total_perceived_latency', totalPerceivedLatency);
+      }
+    }
+  }, []);
+  
+  const captureRenderTime = useCallback((componentName: string, renderDuration: number) => {
+    console.log(`🎨 [UI] ${componentName} render time: ${renderDuration}ms`);
+    
+    if (transactionRef.current) {
+      transactionRef.current.setAttribute(`ui.render_time.${componentName}`, renderDuration);
+    }
+  }, []);
+  
+  const incrementRerenderCount = useCallback(() => {
+    uxTimingsRef.current.rerenderCount += 1;
+    
+    if (transactionRef.current) {
+      transactionRef.current.setAttribute('ui.rerender_count', uxTimingsRef.current.rerenderCount);
+    }
+  }, []);
+  
+  const captureIterationEnd = useCallback(() => {
+    const now = Date.now();
+    const startTimes = uxTimingsRef.current.iterationStartTimes;
+    const endTimes = uxTimingsRef.current.iterationEndTimes;
+    
+    endTimes.push(now);
+    
+    if (startTimes.length > 0) {
+      const lastStartTime = startTimes[startTimes.length - 1];
+      const iterationDuration = now - lastStartTime;
+      
+      console.log(`⏱️ [Flow] Iteration ${endTimes.length} duration: ${iterationDuration}ms`);
+      
+      if (transactionRef.current) {
+        transactionRef.current.setAttribute('flow.iteration_duration', iterationDuration);
+        transactionRef.current.setAttribute('flow.iterations_total', endTimes.length);
+        
+        // Calculate average iteration time
+        const totalIterationTime = endTimes.reduce((sum, endTime, idx) => {
+          return sum + (endTime - startTimes[idx]);
+        }, 0);
+        const avgIterationTime = Math.round(totalIterationTime / endTimes.length);
+        transactionRef.current.setAttribute('flow.time_per_iteration_avg', avgIterationTime);
+      }
+    }
+  }, []);
+  
+  const startUserIdleTimer = useCallback(() => {
+    uxTimingsRef.current.userIdleStartTime = Date.now();
+  }, []);
+  
+  const captureUserEngagement = useCallback(() => {
+    const now = Date.now();
+    
+    if (uxTimingsRef.current.userIdleStartTime) {
+      const userIdleTime = now - uxTimingsRef.current.userIdleStartTime;
+      console.log(`⏱️ [Flow] User idle time: ${userIdleTime}ms`);
+      
+      if (transactionRef.current) {
+        const currentIdleTime = transactionRef.current.attributes?.['flow.user_idle_time'] || 0;
+        transactionRef.current.setAttribute('flow.user_idle_time', currentIdleTime + userIdleTime);
+      }
+      
+      uxTimingsRef.current.userIdleStartTime = null;
+    }
+    
+    // Start new iteration
+    uxTimingsRef.current.iterationStartTimes.push(now);
+  }, []);
+
   return {
     flowId: flowIdRef.current,
     startFlow,
@@ -429,6 +597,16 @@ export function useActionPlanFlowTracking() {
     failFlow,
     isFlowActive: () => !flowCompletedRef.current,
     executeInFlowContext, // For wrapping async operations that should be children
+    
+    // UX Timing capture methods
+    captureFirstFeedback,
+    captureFirstContent,
+    captureActionable,
+    captureRenderTime,
+    incrementRerenderCount,
+    captureIterationEnd,
+    startUserIdleTimer,
+    captureUserEngagement,
   };
 }
 
