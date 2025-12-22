@@ -115,3 +115,4 @@ class SentryPropagator(TextMapPropagator):
             return None
         return [value] if isinstance(value, str) else value
 
+

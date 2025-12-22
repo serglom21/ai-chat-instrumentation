@@ -47,3 +47,4 @@ export const SUGGESTIONS: Array<{ id: string; text: string; category: string }> 
 ];
 
 
+
