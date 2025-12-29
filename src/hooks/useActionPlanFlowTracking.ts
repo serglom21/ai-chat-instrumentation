@@ -52,6 +52,8 @@ export function useActionPlanFlowTracking() {
   const currentStepRef = useRef<string | null>(null);
   const flowCompletedRef = useRef(false);
   const startTimeRef = useRef<number>(Date.now());
+  const waitingForUserSpanRef = useRef<any>(null); // Track active "waiting for user" span
+  const waitingStartTimeRef = useRef<number>(0);
   const metricsRef = useRef<FlowMetrics>({
     iterationNumber: 0,
     totalIterations: 0,
@@ -329,6 +331,36 @@ export function useActionPlanFlowTracking() {
   }, [recordStep]);
 
   /**
+   * Capture iteration end timing
+   */
+  const captureIterationEnd = useCallback(() => {
+    const now = Date.now();
+    const startTimes = uxTimingsRef.current.iterationStartTimes;
+    const endTimes = uxTimingsRef.current.iterationEndTimes;
+    
+    endTimes.push(now);
+    
+    if (startTimes.length > 0) {
+      const lastStartTime = startTimes[startTimes.length - 1];
+      const iterationDuration = now - lastStartTime;
+      
+      console.log(`⏱️ [Flow] Iteration ${endTimes.length} duration: ${iterationDuration}ms`);
+      
+      if (transactionRef.current) {
+        transactionRef.current.setAttribute('flow.iteration_duration', iterationDuration);
+        transactionRef.current.setAttribute('flow.iterations_total', endTimes.length);
+        
+        // Calculate average iteration time
+        const totalIterationTime = endTimes.reduce((sum, endTime, idx) => {
+          return sum + (endTime - startTimes[idx]);
+        }, 0);
+        const avgIterationTime = Math.round(totalIterationTime / endTimes.length);
+        transactionRef.current.setAttribute('flow.time_per_iteration_avg', avgIterationTime);
+      }
+    }
+  }, []);
+
+  /**
    * Complete the flow successfully
    */
   const completeFlow = useCallback((finalPlanId: string) => {
@@ -407,7 +439,7 @@ export function useActionPlanFlowTracking() {
   /**
    * Fail the flow (error occurred)
    */
-  const failFlow = useCallback((error: Error, step?: string) => {
+  const failFlow = useCallback((error: Error, step?: string, additionalAttributes?: Record<string, any>) => {
     if (flowCompletedRef.current || !transactionRef.current) return;
 
     console.log(`❌ Flow failed: ${error.message} at step ${step || currentStepRef.current}`);
@@ -424,6 +456,7 @@ export function useActionPlanFlowTracking() {
           flow_type: 'action_plan_creation',
           failure_step: failureStep,
           completion_percentage: FLOW_STEPS[currentStepRef.current as FlowStep]?.weight || 0,
+          ...additionalAttributes, // Add any additional error context
         },
       },
     });
@@ -436,6 +469,13 @@ export function useActionPlanFlowTracking() {
       transactionRef.current.setAttribute('flow.error_message', error.message);
       transactionRef.current.setAttribute('flow.success', 0);
       transactionRef.current.setAttribute('flow.total_duration_ms', metricsRef.current.totalDuration);
+      
+      // Add any additional error attributes (e.g., backend status, error type, etc.)
+      if (additionalAttributes) {
+        Object.entries(additionalAttributes).forEach(([key, value]) => {
+          transactionRef.current!.setAttribute(key, value);
+        });
+      }
       
       console.log('🏁 [Flow] Ending failed flow span...');
       transactionRef.current.end();
@@ -535,33 +575,6 @@ export function useActionPlanFlowTracking() {
     }
   }, []);
   
-  const captureIterationEnd = useCallback(() => {
-    const now = Date.now();
-    const startTimes = uxTimingsRef.current.iterationStartTimes;
-    const endTimes = uxTimingsRef.current.iterationEndTimes;
-    
-    endTimes.push(now);
-    
-    if (startTimes.length > 0) {
-      const lastStartTime = startTimes[startTimes.length - 1];
-      const iterationDuration = now - lastStartTime;
-      
-      console.log(`⏱️ [Flow] Iteration ${endTimes.length} duration: ${iterationDuration}ms`);
-      
-      if (transactionRef.current) {
-        transactionRef.current.setAttribute('flow.iteration_duration', iterationDuration);
-        transactionRef.current.setAttribute('flow.iterations_total', endTimes.length);
-        
-        // Calculate average iteration time
-        const totalIterationTime = endTimes.reduce((sum, endTime, idx) => {
-          return sum + (endTime - startTimes[idx]);
-        }, 0);
-        const avgIterationTime = Math.round(totalIterationTime / endTimes.length);
-        transactionRef.current.setAttribute('flow.time_per_iteration_avg', avgIterationTime);
-      }
-    }
-  }, []);
-  
   const startUserIdleTimer = useCallback(() => {
     uxTimingsRef.current.userIdleStartTime = Date.now();
   }, []);
@@ -585,6 +598,140 @@ export function useActionPlanFlowTracking() {
     uxTimingsRef.current.iterationStartTimes.push(now);
   }, []);
 
+  /**
+   * Start tracking "waiting for user" time with a visible span
+   * This creates a span that shows up in Sentry as time spent waiting for user action
+   */
+  const startWaitingForUser = useCallback((context: string) => {
+    // End any existing waiting span first
+    if (waitingForUserSpanRef.current) {
+      console.warn('⚠️ [Flow] Previous waiting span still active, ending it first');
+      endWaitingForUser();
+    }
+
+    if (!transactionRef.current) {
+      console.warn('⚠️ [Flow] Cannot start waiting span - no active flow');
+      return;
+    }
+
+    const now = Date.now();
+    waitingStartTimeRef.current = now;
+    uxTimingsRef.current.userIdleStartTime = now;
+
+    console.log(`⏳ [Flow] Starting "waiting for user" span: ${context}`);
+
+    // Create span within the flow context
+    Sentry.withActiveSpan(transactionRef.current, () => {
+      const waitingSpan = Sentry.startInactiveSpan({
+        name: `waiting_for_user.${context}`,
+        op: 'user.wait',
+        attributes: {
+          'flow.id': flowIdRef.current,
+          'wait.context': context,
+          'wait.started_at': now,
+          'flow.iteration_number': metricsRef.current.iterationNumber,
+        },
+      });
+
+      if (waitingSpan) {
+        waitingForUserSpanRef.current = waitingSpan;
+        console.log(`   ✅ Waiting span created: ${context}`);
+      } else {
+        console.error('   ❌ Failed to create waiting span');
+      }
+    });
+  }, []);
+
+  /**
+   * End tracking "waiting for user" time
+   * This completes the span showing how long the user took to respond/act
+   */
+  const endWaitingForUser = useCallback((userAction?: string) => {
+    if (!waitingForUserSpanRef.current) {
+      console.log('ℹ️ [Flow] No active waiting span to end');
+      return;
+    }
+
+    const now = Date.now();
+    const waitDuration = now - waitingStartTimeRef.current;
+
+    console.log(`✅ [Flow] Ending "waiting for user" span (${waitDuration}ms)`);
+    if (userAction) {
+      console.log(`   User action: ${userAction}`);
+    }
+
+    // Update span attributes
+    waitingForUserSpanRef.current.setAttribute('wait.duration_ms', waitDuration);
+    waitingForUserSpanRef.current.setAttribute('wait.ended_at', now);
+    
+    if (userAction) {
+      waitingForUserSpanRef.current.setAttribute('wait.user_action', userAction);
+    }
+
+    // End the span
+    waitingForUserSpanRef.current.end();
+    waitingForUserSpanRef.current = null;
+
+    // Update flow attributes with cumulative idle time
+    if (transactionRef.current && uxTimingsRef.current.userIdleStartTime) {
+      const userIdleTime = now - uxTimingsRef.current.userIdleStartTime;
+      const currentIdleTime = transactionRef.current.attributes?.['flow.user_idle_time'] || 0;
+      transactionRef.current.setAttribute('flow.user_idle_time', currentIdleTime + userIdleTime);
+      transactionRef.current.setAttribute('flow.user_idle_time_total', currentIdleTime + userIdleTime);
+      
+      uxTimingsRef.current.userIdleStartTime = null;
+    }
+
+    console.log(`   ✅ User wait time captured: ${waitDuration}ms`);
+  }, []);
+
+  /**
+   * SCENARIO 3: Cleanup on component unmount
+   * Ensures accurate timing when user abandons flow by navigating away
+   */
+  useEffect(() => {
+    return () => {
+      // End any active waiting span
+      if (waitingForUserSpanRef.current) {
+        console.log('🔄 [Flow] Ending waiting span on unmount');
+        const waitDuration = Date.now() - waitingStartTimeRef.current;
+        waitingForUserSpanRef.current.setAttribute('wait.duration_ms', waitDuration);
+        waitingForUserSpanRef.current.setAttribute('wait.abandoned', true);
+        waitingForUserSpanRef.current.end();
+        waitingForUserSpanRef.current = null;
+      }
+
+      // Component is unmounting - if flow is still active, mark it as abandoned
+      if (transactionRef.current && !flowCompletedRef.current) {
+        const actualDuration = Date.now() - startTimeRef.current;
+        
+        console.log('🔄 [Flow] Component unmounting with active flow');
+        console.log('⚠️ [Flow] Marking flow as abandoned due to navigation/unmount');
+        console.log(`⏱️ [Flow] Actual duration before unmount: ${actualDuration}ms`);
+        
+        // Update span with abandonment details
+        transactionRef.current.setAttribute('flow.status', 'abandoned');
+        transactionRef.current.setAttribute('flow.dropout_reason', 'user_navigated_away');
+        transactionRef.current.setAttribute('flow.success', 0);
+        transactionRef.current.setAttribute('flow.total_duration_ms', actualDuration);
+        transactionRef.current.setAttribute('flow.incomplete_at_unmount', true);
+        
+        // Record where they dropped off
+        if (currentStepRef.current) {
+          transactionRef.current.setAttribute('flow.dropout_step', currentStepRef.current);
+        }
+        
+        // End the span with accurate timing
+        transactionRef.current.end();
+        
+        console.log('✅ [Flow] Abandoned flow span sent to Sentry with accurate timing');
+        
+        flowCompletedRef.current = true;
+        transactionRef.current = null;
+      }
+    };
+  }, []); // Empty deps - only run on mount/unmount
+
   return {
     flowId: flowIdRef.current,
     startFlow,
@@ -607,6 +754,10 @@ export function useActionPlanFlowTracking() {
     captureIterationEnd,
     startUserIdleTimer,
     captureUserEngagement,
+    
+    // User waiting/idle time tracking (creates visible spans)
+    startWaitingForUser,
+    endWaitingForUser,
   };
 }
 

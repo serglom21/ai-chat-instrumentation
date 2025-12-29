@@ -198,56 +198,107 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       if (actionPlan) {
         console.log('📋 [ChatScreen] Processing action plan...');
         
-        // Measure render time
-        const renderStartTime = Date.now();
-        
-        // 📊 RECORD: Plan parsed
-        const planParseTime = 50; // Mock parsing time
-        flowTracking.recordActionPlanReceived(
-          actionPlan.content.split('\n').filter((l: string) => l.startsWith('#')).length,
-          actionPlan.content.split('\n').length,
-          planParseTime
-        );
-        
-        const newActionPlan: ActionPlan = {
-          id: actionPlan.id,
-          title: actionPlan.title,
-          content: actionPlan.content,
-          status: 'draft',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          version: actionPlan.version || 1,
-        };
+        try {
+          // SCENARIO 2: Track parsing and rendering success/failure
+          console.log('🔍 [ChatScreen] SCENARIO 2 Check: Parsing action plan from successful backend response...');
+          
+          // Measure render time
+          const renderStartTime = Date.now();
+          
+          // Validate action plan structure
+          if (!actionPlan.content || typeof actionPlan.content !== 'string') {
+            throw new Error('Invalid action plan: missing or invalid content');
+          }
+          if (!actionPlan.id || !actionPlan.title) {
+            throw new Error('Invalid action plan: missing id or title');
+          }
+          
+          // 📊 RECORD: Plan parsed successfully
+          const planParseTime = 50; // Mock parsing time
+          flowTracking.recordActionPlanReceived(
+            actionPlan.content.split('\n').filter((l: string) => l.startsWith('#')).length,
+            actionPlan.content.split('\n').length,
+            planParseTime
+          );
+          
+          flowTracking.recordStep('PLAN_PARSED', {
+            'response.parsed': true,
+            'plan.sections_count': actionPlan.content.split('\n').filter((l: string) => l.startsWith('#')).length,
+            'plan.content_length': actionPlan.content.length,
+          });
+          
+          const newActionPlan: ActionPlan = {
+            id: actionPlan.id,
+            title: actionPlan.title,
+            content: actionPlan.content,
+            status: 'draft',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            version: actionPlan.version || 1,
+          };
 
-        console.log('✅ [ChatScreen] Setting action plan and stopping loading...');
-        setChatState((prev) => ({
-          ...prev,
-          currentActionPlan: newActionPlan,
-          isGenerating: false,
-        }));
-        
-        // 📊 RECORD: Plan rendered
-        const renderDuration = Date.now() - renderStartTime;
-        flowTracking.captureRenderTime('action_plan_card', renderDuration);
-        flowTracking.recordStep('PLAN_RENDERED', {
-          plan_id: newActionPlan.id,
-          plan_version: 1,
-        });
+          console.log('✅ [ChatScreen] Setting action plan and stopping loading...');
+          setChatState((prev) => ({
+            ...prev,
+            currentActionPlan: newActionPlan,
+            isGenerating: false,
+          }));
+          
+          // 📊 RECORD: Plan rendered successfully
+          const renderDuration = Date.now() - renderStartTime;
+          flowTracking.captureRenderTime('action_plan_card', renderDuration);
+          flowTracking.recordStep('PLAN_RENDERED', {
+            plan_id: newActionPlan.id,
+            plan_version: 1,
+            'ui.displayed': true, // Successfully displayed to user
+          });
 
-        // Show commit option
-        addMessage('system', 'Would you like to commit to this action plan, or would you like me to refine it further?');
-        console.log('✅ [ChatScreen] Action plan processing complete');
-        
-        // 📊 UX TIMING: User can now interact (plan is actionable)
-        flowTracking.captureActionable();
-        
-        // 📊 FLOW TIMING: Iteration complete
-        flowTracking.captureIterationEnd();
-        
-        // 📊 UX TIMING: Start tracking user idle time
-        flowTracking.startUserIdleTimer();
+          // Show commit option
+          addMessage('system', 'Would you like to commit to this action plan, or would you like me to refine it further?');
+          console.log('✅ [ChatScreen] Action plan processing complete');
+          
+          // 📊 UX TIMING: User can now interact (plan is actionable)
+          flowTracking.captureActionable();
+          
+          // 📊 FLOW TIMING: Iteration complete
+          flowTracking.captureIterationEnd();
+          
+          // ⏳ START WAITING: User is now reviewing the plan
+          flowTracking.startWaitingForUser('reviewing_initial_plan');
+          
+        } catch (parseError) {
+          // SCENARIO 2: Backend succeeded (200 OK) but frontend failed to parse/display
+          console.error('❌ [ChatScreen] SCENARIO 2: Backend returned 200 OK but frontend failed to display!');
+          console.error('❌ [ChatScreen] Parse/render error:', parseError);
+          console.error('❌ [ChatScreen] This means the response was received but couldn\'t be shown to the user');
+          
+          // 📊 RECORD: Backend success but frontend display failure
+          flowTracking.failFlow(parseError as Error, 'frontend_display_error', {
+            'error.type': 'parsing_or_rendering',
+            'error.backend_responded': true,
+            'error.backend_status_code': 200,
+            'error.frontend_failed': true,
+            'error.user_impact': 'response_not_displayed',
+            'response.received': true,
+            'response.parsed': false,
+            'ui.displayed': false,
+          });
+          
+          addMessage('ai', 'I received a response but couldn\'t display it properly. Please try again.');
+          
+          setChatState((prev) => ({
+            ...prev,
+            isGenerating: false,
+            activeFlow: undefined,
+          }));
+        }
       } else {
         console.warn('⚠️ [ChatScreen] No action plan in response, stopping loading...');
+        
+        // 📊 RECORD: Backend responded but no action plan in response
+        // Note: This is not a failure but an unexpected response
+        console.log('⚠️ [ChatScreen] Response received but no action plan included');
+        
         setChatState((prev) => ({
           ...prev,
           isGenerating: false,
@@ -257,10 +308,45 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       console.error('❌ [ChatScreen] Error generating action plan:', error);
       console.error('❌ [ChatScreen] Error stack:', (error as Error).stack);
       
-      // 📊 RECORD: Flow failed
-      flowTracking.failFlow(error as Error, 'api_request');
+      // SCENARIO 1: Determine if this was a timeout/no response
+      const errorMessage = (error as Error).message?.toLowerCase() || '';
+      const isTimeout = errorMessage.includes('timeout') || 
+                        errorMessage.includes('timed out') ||
+                        errorMessage.includes('network request failed');
+      const isNetworkError = errorMessage.includes('network') || 
+                             errorMessage.includes('connection');
       
-      addMessage('ai', 'Sorry, I encountered an error generating your action plan. Please try again.');
+      if (isTimeout) {
+        console.error('⏱️ [ChatScreen] SCENARIO 1: Backend timeout - user sent message but never got response');
+        
+        // 📊 RECORD: Timeout failure with specific attributes
+        flowTracking.failFlow(error as Error, 'api_timeout', {
+          'error.type': 'timeout',
+          'error.backend_responded': false,
+          'error.user_impact': 'no_response_received',
+        });
+        
+        addMessage('ai', 'Sorry, the request timed out. The server might be overloaded. Please try again.');
+      } else if (isNetworkError) {
+        console.error('🌐 [ChatScreen] SCENARIO 1: Network error - user sent message but never got response');
+        
+        // 📊 RECORD: Network failure
+        flowTracking.failFlow(error as Error, 'network_error', {
+          'error.type': 'network',
+          'error.backend_responded': false,
+          'error.user_impact': 'no_response_received',
+        });
+        
+        addMessage('ai', 'Sorry, there was a network error. Please check your connection and try again.');
+      } else {
+        // Generic API error
+        console.error('❌ [ChatScreen] API error:', error);
+        
+        // 📊 RECORD: Generic API failure
+        flowTracking.failFlow(error as Error, 'api_request');
+        
+        addMessage('ai', 'Sorry, I encountered an error generating your action plan. Please try again.');
+      }
       
       console.log('🛑 [ChatScreen] Stopping loading due to error...');
       setChatState((prev) => ({
@@ -283,12 +369,17 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
 
   // Handle action plan iterations
   const handleActionPlanIteration = async (userMessage: string) => {
+    // ⏹️ END WAITING: User provided feedback/action
+    const isCommit = userMessage.toLowerCase().includes('commit') || 
+                     userMessage.toLowerCase().includes('save') ||
+                     userMessage.toLowerCase().includes('looks good');
+    
+    flowTracking.endWaitingForUser(isCommit ? 'commit_plan' : 'request_changes');
+    
     // 📊 UX TIMING: Capture user engagement (end of idle time)
     flowTracking.captureUserEngagement();
     
-    if (userMessage.toLowerCase().includes('commit') || 
-        userMessage.toLowerCase().includes('save') ||
-        userMessage.toLowerCase().includes('looks good')) {
+    if (isCommit) {
       await commitActionPlan();
     } else {
       // Continue iteration
@@ -375,7 +466,9 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
           // 📊 UX TIMING: Iteration complete and actionable
           flowTracking.captureActionable();
           flowTracking.captureIterationEnd();
-          flowTracking.startUserIdleTimer();
+          
+          // ⏳ START WAITING: User is reviewing the updated plan
+          flowTracking.startWaitingForUser('reviewing_iteration');
         } else {
           setChatState((prev) => ({ ...prev, isGenerating: false }));
         }
@@ -403,11 +496,11 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       });
 
       const response = await flowTracking.executeInFlowContext(async () => {
-        return await chatAPI.commitActionPlan(chatState.currentActionPlan.id);
+        return await chatAPI.commitActionPlan(chatState.currentActionPlan!.id);
       });
 
       const savedPlan: ActionPlan = {
-        ...chatState.currentActionPlan,
+        ...chatState.currentActionPlan!,
         status: 'saved',
         updatedAt: new Date(),
       };

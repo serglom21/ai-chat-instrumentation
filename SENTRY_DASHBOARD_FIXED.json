@@ -1,0 +1,413 @@
+{
+  "title": "AI Action Plan - Performance Monitoring",
+  "filters": {},
+  "projects": [],
+  "environment": [],
+  "widgets": [
+    {
+      "title": "⚡ Action Plan Flow Duration",
+      "description": "Overall flow duration - works immediately",
+      "interval": "5m",
+      "queries": [
+        {
+          "aggregates": ["p50(span.duration)", "p75(span.duration)", "p95(span.duration)", "p99(span.duration)"],
+          "columns": [],
+          "conditions": "span.op:user_flow.action_plan",
+          "name": "Flow Duration",
+          "orderby": "",
+          "fieldAliases": [],
+          "fields": ["p50(span.duration)", "p75(span.duration)", "p95(span.duration)", "p99(span.duration)"]
+        }
+      ],
+      "displayType": "line",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 3, "y": 0, "minH": 2, "x": 0}
+    },
+    {
+      "title": "🤖 AI Generation Duration",
+      "description": "Backend AI span duration",
+      "interval": "5m",
+      "queries": [
+        {
+          "aggregates": ["p50(span.duration)", "p75(span.duration)", "p95(span.duration)", "p99(span.duration)"],
+          "columns": [],
+          "conditions": "span.op:ai.action_plan.generation",
+          "name": "AI Duration",
+          "orderby": "",
+          "fieldAliases": [],
+          "fields": ["p50(span.duration)", "p75(span.duration)", "p95(span.duration)", "p99(span.duration)"]
+        }
+      ],
+      "displayType": "line",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 3, "y": 0, "minH": 2, "x": 3}
+    },
+    {
+      "title": "📊 Current Flow Rate",
+      "description": "Flows per hour",
+      "interval": "1h",
+      "queries": [
+        {
+          "aggregates": ["count()"],
+          "columns": [],
+          "conditions": "span.op:user_flow.action_plan",
+          "name": "",
+          "orderby": "",
+          "fieldAliases": [],
+          "fields": ["count()"]
+        }
+      ],
+      "displayType": "big_number",
+      "widgetType": "spans",
+      "layout": {"h": 1, "w": 1, "y": 2, "minH": 1, "x": 0}
+    },
+    {
+      "title": "⏱️ Avg Flow Duration",
+      "description": "Average time for complete flow",
+      "interval": "1h",
+      "queries": [
+        {
+          "aggregates": ["avg(span.duration)"],
+          "columns": [],
+          "conditions": "span.op:user_flow.action_plan",
+          "name": "",
+          "orderby": "",
+          "fieldAliases": [],
+          "fields": ["avg(span.duration)"]
+        }
+      ],
+      "displayType": "big_number",
+      "widgetType": "spans",
+      "layout": {"h": 1, "w": 1, "y": 2, "minH": 1, "x": 1}
+    },
+    {
+      "title": "🎯 P95 Flow Duration",
+      "description": "95th percentile flow time",
+      "interval": "1h",
+      "queries": [
+        {
+          "aggregates": ["p95(span.duration)"],
+          "columns": [],
+          "conditions": "span.op:user_flow.action_plan",
+          "name": "",
+          "orderby": "",
+          "fieldAliases": [],
+          "fields": ["p95(span.duration)"]
+        }
+      ],
+      "displayType": "big_number",
+      "widgetType": "spans",
+      "layout": {"h": 1, "w": 1, "y": 2, "minH": 1, "x": 2}
+    },
+    {
+      "title": "🔄 Flow Completion Rate",
+      "description": "Success vs abandoned vs failed flows",
+      "interval": "1h",
+      "queries": [
+        {
+          "aggregates": ["count()"],
+          "columns": ["flow.status"],
+          "conditions": "span.op:user_flow.action_plan",
+          "name": "Flow Status",
+          "orderby": "-count()",
+          "fieldAliases": [""],
+          "fields": ["flow.status", "count()"]
+        }
+      ],
+      "displayType": "bar",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 2, "y": 3, "minH": 2, "x": 0}
+    },
+    {
+      "title": "🚪 Dropout Analysis",
+      "description": "Where users abandon the flow",
+      "interval": "1h",
+      "queries": [
+        {
+          "aggregates": ["count()"],
+          "columns": ["flow.dropout_step"],
+          "conditions": "span.op:user_flow.action_plan flow.status:abandoned",
+          "name": "Dropout Points",
+          "orderby": "-count()",
+          "fieldAliases": [""],
+          "fields": ["flow.dropout_step", "count()"]
+        }
+      ],
+      "displayType": "table",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 2, "y": 3, "minH": 2, "x": 2}
+    },
+    {
+      "title": "📱 Template Performance",
+      "description": "Flow duration by template",
+      "interval": "1h",
+      "queries": [
+        {
+          "aggregates": ["p95(span.duration)", "count()"],
+          "columns": ["template.name"],
+          "conditions": "span.op:user_flow.action_plan",
+          "name": "Template Analysis",
+          "orderby": "-p95(span.duration)",
+          "fieldAliases": ["", ""],
+          "fields": ["template.name", "p95(span.duration)", "count()"]
+        }
+      ],
+      "displayType": "table",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 2, "y": 3, "minH": 2, "x": 4}
+    },
+    {
+      "title": "📊 Flow Steps Distribution",
+      "description": "Time spent in each step",
+      "interval": "1h",
+      "queries": [
+        {
+          "aggregates": ["p75(span.duration)"],
+          "columns": ["step.name"],
+          "conditions": "span.op:flow.step",
+          "name": "Step Timing",
+          "orderby": "-p75(span.duration)",
+          "fieldAliases": [""],
+          "fields": ["step.name", "p75(span.duration)"]
+        }
+      ],
+      "displayType": "bar",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 3, "y": 5, "minH": 2, "x": 0}
+    },
+    {
+      "title": "🔢 Iteration Distribution",
+      "description": "Number of iterations per flow",
+      "interval": "1h",
+      "queries": [
+        {
+          "aggregates": ["count()"],
+          "columns": ["flow.iterations_total"],
+          "conditions": "span.op:user_flow.action_plan",
+          "name": "Iterations",
+          "orderby": "flow.iterations_total",
+          "fieldAliases": [""],
+          "fields": ["flow.iterations_total", "count()"]
+        }
+      ],
+      "displayType": "bar",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 3, "y": 5, "minH": 2, "x": 3}
+    },
+    {
+      "title": "⚡ TTFT (Time To First Token)",
+      "description": "AI response latency - requires numeric measurements.ai.ttft",
+      "interval": "5m",
+      "queries": [
+        {
+          "aggregates": ["p50(measurements.ai.ttft)", "p75(measurements.ai.ttft)", "p95(measurements.ai.ttft)"],
+          "columns": [],
+          "conditions": "span.op:ai.action_plan.generation",
+          "name": "TTFT",
+          "orderby": "",
+          "fieldAliases": [],
+          "fields": ["p50(measurements.ai.ttft)", "p75(measurements.ai.ttft)", "p95(measurements.ai.ttft)"]
+        }
+      ],
+      "displayType": "line",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 2, "y": 7, "minH": 2, "x": 0}
+    },
+    {
+      "title": "🏁 TTLT (Time To Last Token)",
+      "description": "Total AI generation time - requires measurements.ai.ttlt",
+      "interval": "5m",
+      "queries": [
+        {
+          "aggregates": ["p50(measurements.ai.ttlt)", "p75(measurements.ai.ttlt)", "p95(measurements.ai.ttlt)"],
+          "columns": [],
+          "conditions": "span.op:ai.action_plan.generation",
+          "name": "TTLT",
+          "orderby": "",
+          "fieldAliases": [],
+          "fields": ["p50(measurements.ai.ttlt)", "p75(measurements.ai.ttlt)", "p95(measurements.ai.ttlt)"]
+        }
+      ],
+      "displayType": "line",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 2, "y": 7, "minH": 2, "x": 2}
+    },
+    {
+      "title": "🚀 Token Generation Rate",
+      "description": "Tokens per second - requires measurements.ai.tokens_per_second",
+      "interval": "5m",
+      "queries": [
+        {
+          "aggregates": ["avg(measurements.ai.tokens_per_second)", "p95(measurements.ai.tokens_per_second)"],
+          "columns": [],
+          "conditions": "span.op:ai.action_plan.generation",
+          "name": "Tokens/Sec",
+          "orderby": "",
+          "fieldAliases": [],
+          "fields": ["avg(measurements.ai.tokens_per_second)", "p95(measurements.ai.tokens_per_second)"]
+        }
+      ],
+      "displayType": "line",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 2, "y": 7, "minH": 2, "x": 4}
+    },
+    {
+      "title": "💰 Token Usage",
+      "description": "Total tokens - requires measurements.ai.total_tokens",
+      "interval": "1h",
+      "queries": [
+        {
+          "aggregates": ["sum(measurements.ai.total_tokens)", "sum(measurements.ai.input_tokens)", "sum(measurements.ai.output_tokens)"],
+          "columns": [],
+          "conditions": "span.op:ai.action_plan.generation",
+          "name": "Token Consumption",
+          "orderby": "",
+          "fieldAliases": [],
+          "fields": ["sum(measurements.ai.total_tokens)", "sum(measurements.ai.input_tokens)", "sum(measurements.ai.output_tokens)"]
+        }
+      ],
+      "displayType": "area",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 3, "y": 9, "minH": 2, "x": 0}
+    },
+    {
+      "title": "🔥 Streaming Health",
+      "description": "Chunk timing - requires measurements.ai.time_between_chunks_p95",
+      "interval": "5m",
+      "queries": [
+        {
+          "aggregates": ["p95(measurements.ai.time_between_chunks_p95)", "avg(measurements.ai.time_between_chunks_avg)"],
+          "columns": [],
+          "conditions": "span.op:ai.action_plan.generation",
+          "name": "Chunk Timing",
+          "orderby": "",
+          "fieldAliases": [],
+          "fields": ["p95(measurements.ai.time_between_chunks_p95)", "avg(measurements.ai.time_between_chunks_avg)"]
+        }
+      ],
+      "displayType": "line",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 3, "y": 9, "minH": 2, "x": 3}
+    },
+    {
+      "title": "🤖 Performance by AI Model",
+      "description": "Compare span duration by model",
+      "interval": "1h",
+      "queries": [
+        {
+          "aggregates": ["p75(span.duration)"],
+          "columns": ["ai.model"],
+          "conditions": "span.op:ai.action_plan.generation",
+          "name": "Model Comparison",
+          "orderby": "-p75(span.duration)",
+          "fieldAliases": [""],
+          "fields": ["ai.model", "p75(span.duration)"]
+        }
+      ],
+      "displayType": "bar",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 2, "y": 11, "minH": 2, "x": 0}
+    },
+    {
+      "title": "📝 Prompt Complexity Impact",
+      "description": "Duration by complexity",
+      "interval": "1h",
+      "queries": [
+        {
+          "aggregates": ["p75(span.duration)", "count()"],
+          "columns": ["ai.prompt_complexity"],
+          "conditions": "span.op:ai.action_plan.generation",
+          "name": "Complexity",
+          "orderby": "",
+          "fieldAliases": ["", ""],
+          "fields": ["ai.prompt_complexity", "p75(span.duration)", "count()"]
+        }
+      ],
+      "displayType": "table",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 2, "y": 11, "minH": 2, "x": 2}
+    },
+    {
+      "title": "👤 UX: Time to First Feedback",
+      "description": "Requires measurements.ux.time_to_first_feedback",
+      "interval": "5m",
+      "queries": [
+        {
+          "aggregates": ["p50(measurements.ux.time_to_first_feedback)", "p95(measurements.ux.time_to_first_feedback)"],
+          "columns": [],
+          "conditions": "span.op:user_flow.action_plan",
+          "name": "First Feedback",
+          "orderby": "",
+          "fieldAliases": [],
+          "fields": ["p50(measurements.ux.time_to_first_feedback)", "p95(measurements.ux.time_to_first_feedback)"]
+        }
+      ],
+      "displayType": "line",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 2, "y": 11, "minH": 2, "x": 4}
+    },
+    {
+      "title": "🎨 UX: Time to First Content",
+      "description": "Requires measurements.ux.time_to_first_content",
+      "interval": "5m",
+      "queries": [
+        {
+          "aggregates": ["p50(measurements.ux.time_to_first_content)", "p95(measurements.ux.time_to_first_content)"],
+          "columns": [],
+          "conditions": "span.op:user_flow.action_plan",
+          "name": "First Content",
+          "orderby": "",
+          "fieldAliases": [],
+          "fields": ["p50(measurements.ux.time_to_first_content)", "p95(measurements.ux.time_to_first_content)"]
+        }
+      ],
+      "displayType": "line",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 2, "y": 13, "minH": 2, "x": 0}
+    },
+    {
+      "title": "✨ UX: Total Perceived Latency",
+      "description": "Requires measurements.ux.total_perceived_latency",
+      "interval": "5m",
+      "queries": [
+        {
+          "aggregates": ["p50(measurements.ux.total_perceived_latency)", "p95(measurements.ux.total_perceived_latency)"],
+          "columns": [],
+          "conditions": "span.op:user_flow.action_plan",
+          "name": "Perceived Latency",
+          "orderby": "",
+          "fieldAliases": [],
+          "fields": ["p50(measurements.ux.total_perceived_latency)", "p95(measurements.ux.total_perceived_latency)"]
+        }
+      ],
+      "displayType": "line",
+      "widgetType": "spans",
+      "layout": {"h": 2, "w": 2, "y": 13, "minH": 2, "x": 2}
+    },
+    {
+      "title": "🔍 Slowest Flows (Recent 24h)",
+      "description": "Top 10 slowest complete flows",
+      "interval": "24h",
+      "queries": [
+        {
+          "aggregates": ["span.duration"],
+          "columns": ["template.name", "flow.iterations_total"],
+          "conditions": "span.op:user_flow.action_plan",
+          "name": "Slow Flows",
+          "orderby": "-span.duration",
+          "fieldAliases": ["", ""],
+          "fields": ["template.name", "flow.iterations_total", "span.duration"]
+        }
+      ],
+      "displayType": "table",
+      "widgetType": "spans",
+      "limit": 10,
+      "layout": {"h": 3, "w": 3, "y": 13, "minH": 2, "x": 4}
+    }
+  ]
+}
+
+
+
+
+

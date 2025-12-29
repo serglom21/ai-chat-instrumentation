@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Sentry Span Nesting Test</title>
+  <script src="https://browser.sentry-cdn.com/7.92.0/bundle.tracing.min.js"></script>
+</head>
+<body>
+  <h1>Sentry Span Nesting Test</h1>
+  <button onclick="testSpanNesting()">Test Span Nesting</button>
+  <button onclick="testInactiveSpan()">Test Inactive Span</button>
+  <pre id="output"></pre>
+
+  <script>
+    // Initialize Sentry
+    Sentry.init({
+      dsn: 'https://0bdc0587668a5c8e493c065614c8b741@o4508236363464704.ingest.us.sentry.io/4509993588424704',
+      integrations: [
+        new Sentry.BrowserTracing(),
+      ],
+      tracesSampleRate: 1.0,
+      debug: true,
+    });
+
+    function log(msg) {
+      const output = document.getElementById('output');
+      output.textContent += msg + '\n';
+      console.log(msg);
+    }
+
+    // Test 1: Regular startSpan nesting (callback pattern)
+    async function testSpanNesting() {
+      document.getElementById('output').textContent = '';
+      log('🧪 Test 1: Regular startSpan nesting\n');
+      
+      Sentry.startSpan({ name: 'parent_span', op: 'test.parent' }, async (parentSpan) => {
+        log('✅ Parent span created: ' + parentSpan.spanId);
+        
+        // Create child span
+        Sentry.startSpan({ name: 'child_span', op: 'test.child' }, (childSpan) => {
+          log('✅ Child span created: ' + childSpan.spanId);
+          log('   Parent ID: ' + (childSpan.parentSpanId || 'NONE'));
+        });
+        
+        // Simulate async work
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        log('\n✅ Test 1 complete - parent span will end now');
+      });
+    }
+
+    // Test 2: Inactive span (manual control)
+    async function testInactiveSpan() {
+      document.getElementById('output').textContent = '';
+      log('🧪 Test 2: Inactive span with manual control\n');
+      
+      const parentSpan = Sentry.startInactiveSpan({
+        name: 'inactive_parent',
+        op: 'test.inactive_parent',
+        forceTransaction: true,
+      });
+      
+      log('✅ Inactive parent span created: ' + parentSpan.spanId);
+      
+      // Try to create child with withActiveSpan
+      await Sentry.withActiveSpan(parentSpan, async () => {
+        log('✅ Inside withActiveSpan callback');
+        
+        Sentry.startSpan({ name: 'child_of_inactive', op: 'test.child' }, (childSpan) => {
+          log('✅ Child span created: ' + childSpan.spanId);
+          log('   Parent ID: ' + (childSpan.parentSpanId || 'NONE'));
+        });
+        
+        // Simulate async work
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        log('\n✅ Async work complete');
+      });
+      
+      // Manually end the parent span
+      log('🏁 Ending parent span manually...');
+      parentSpan.end();
+      log('✅ Parent span ended');
+      
+      log('\n✅ Test 2 complete - check Sentry in a few seconds');
+    }
+  </script>
+
+  <div style="margin-top: 20px; padding: 20px; background: #f0f0f0;">
+    <h3>Instructions:</h3>
+    <ol>
+      <li>Click "Test Span Nesting" to test regular callback pattern</li>
+      <li>Click "Test Inactive Span" to test inactive span with withActiveSpan</li>
+      <li>Check console and output above</li>
+      <li>Go to Sentry → Performance → Traces</li>
+      <li>Find the test traces and verify parent-child relationships</li>
+    </ol>
+    <p><strong>Expected:</strong> Child spans should have Parent ID matching the parent span ID</p>
+  </div>
+</body>
+</html>
+
+
+
+
+
+
