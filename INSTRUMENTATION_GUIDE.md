@@ -64,7 +64,7 @@ Query:
 
 **Instrumentation Code**:
 - **Location**: [`src/hooks/useActionPlanFlowTracking.ts` (lines 166-203)](src/hooks/useActionPlanFlowTracking.ts#L166-L203)
-- **Integration**: [`src/screens/ChatScreen.tsx` (line 141)](src/screens/ChatScreen.tsx#L141)
+- **Integration**: [`src/screens/ChatScreen.tsx` (line 151)](src/screens/ChatScreen.tsx#L151)
 
 **Code Example**:
 ```typescript
@@ -120,7 +120,7 @@ Query:
 ```
 
 **Instrumentation Code**:
-- **Location**: [`src/screens/ChatScreen.tsx` (line 169)](src/screens/ChatScreen.tsx#L169)
+- **Location**: [`src/screens/ChatScreen.tsx` (line 151)](src/screens/ChatScreen.tsx#L151)
 
 **Code Example**:
 ```typescript
@@ -155,7 +155,7 @@ Query:
 ```
 
 **Instrumentation Code**:
-- **Location**: [`src/screens/ChatScreen.tsx` (line 202)](src/screens/ChatScreen.tsx#L202)
+- **Location**: [`src/screens/ChatScreen.tsx` (line 184)](src/screens/ChatScreen.tsx#L184)
 
 **Code Example**:
 ```typescript
@@ -247,7 +247,7 @@ Query:
 ```
 
 **Instrumentation Code**:
-- **Location**: [`src/screens/ChatScreen.tsx` (line 457)](src/screens/ChatScreen.tsx#L457)
+- **Location**: [`src/screens/ChatScreen.tsx` (line 492)](src/screens/ChatScreen.tsx#L492)
 
 **Code Example**:
 ```typescript
@@ -285,14 +285,13 @@ Query:
 ```
 
 **Instrumentation Code**:
-- **Location**: [`src/screens/ChatScreen.tsx` (line 478)](src/screens/ChatScreen.tsx#L478)
+- **Location**: [`src/hooks/useActionPlanFlowTracking.ts` (line 478)](src/hooks/useActionPlanFlowTracking.ts#L378)
 
 **Code Example**:
 ```typescript
 // After commit, show the card
-flowTracking.recordStep('CARD_DISPLAYED', {
-  'card_type': 'action_plan',
-  'display_location': 'chat_history',
+ recordStep('CARD_DISPLAYED', {
+      plan_id: finalPlanId,
 });
 ```
 
