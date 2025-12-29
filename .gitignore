@@ -55,6 +55,7 @@ sentry.properties
 # Documentation (excluded from commits)
 *.md
 !README.md
+!INSTRUMENTATION_GUIDE.md
 
 # Native build folders
 ios/
